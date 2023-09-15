@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MSE DASH Player</title>
+</head>
+<body>
+    <video id="src1" controls muted ></video>
+
+    <script>
+        var videoElement1 = document.getElementById("src1");
+        
+        var mimeCodecL = 'video/mp4; codecs="avc1.42c01e"';
+        var mimeCodecH = 'video/mp4; codecs="avc1.4d4020"';
+
+        var mpdURL1 = 'http://localhost:8088/dash/multidashhigh/multidash.mpd';
+
+        var baseURL1 = 'http://localhost:8088/dash/multidashhigh/';
+        var play =true;
+        var currentRepresentation = 0;
+        var quality = true;
+        // 将 video 元素的 src 设置为 MediaSource 对象的 URL
+        if ("MediaSource" in window && MediaSource.isTypeSupported(mimeCodecH) && MediaSource.isTypeSupported(mimeCodecL)) {
+            var mediaSourceLow  = new MediaSource();
+            var mediaSourceHigh  = new MediaSource();
+            videoElement1.src = URL.createObjectURL(mediaSourceLow);
+            mediaSourceLow.addEventListener("sourceopen", sourceOpenLow);
+            mediaSourceHigh.addEventListener("sourceopen", sourceOpenHigh);
+        } else {
+            console.error("Unsupported MIME type or codec: ");
+        }
+        function sourceOpenLow() {
+            var mediaSourceLow = this;
+            var sourceBufferLow = mediaSourceLow.addSourceBuffer(mimeCodecL);
+
+            fetch(mpdURL1).then(response =>{
+                return response.text()
+            }).then(mpdData =>{
+                // 解析 MPD 文件
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(mpdData, "text/xml");
+                // 获取 SegmentTemplate 的相关信息
+                const timescale = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('timescale'));
+                const segmentDuration = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('duration'));
+                const mediaTemplate = xmlDoc.querySelector('SegmentTemplate').getAttribute('media');
+                const startNumber = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('startNumber'));
+                    // 获取 SegmentTemplate 下的 Initialization 和 Media 模板
+                const initializationTemplate = xmlDoc.querySelector('SegmentTemplate').getAttribute('initialization');
+                let segmentIndex = startNumber;
+
+                var initSegmentURL = baseURL1 + initializationTemplate.replace('$RepresentationID$','0');
+
+                fetch(initSegmentURL).then(response => response.arrayBuffer())
+                .then(initSegmentData=>{
+                    // 加载第一个初始化片段后，开始加载媒体片段
+                    sourceBufferLow.appendBuffer(initSegmentData);
+                    loadNextSegment();
+                })
+                function loadNextSegment() {
+                    // 构建初始化片段和媒体片段的 URL
+                    const mediaSegmentURL = baseURL1 + mediaTemplate
+                            .replace('$RepresentationID$', '0') // 假定只有一个 Representation
+                            .replace('$Number%05d$', segmentIndex.toString().padStart(5, '0'));
+                    fetch(mediaSegmentURL)
+                    .then(response => {
+                        if(response.ok){
+                            return response.arrayBuffer()
+                        }else{
+                            setTimeout(loadNextSegment, segmentDuration*5/1000);
+                        }
+                    })
+                    .then(mediaSegmentData => {  
+                        sourceBufferLow.appendBuffer(mediaSegmentData);
+                        segmentIndex++; 
+                        checkBW(mediaSegmentURL)   
+                    })
+                    .catch(error => {
+                        console.log(`waiting next segment:`);
+                    });
+                    if (segmentIndex === startNumber + 2 && play) {
+                        videoElement1.play();
+                        play = false;
+                    }
+                }
+                sourceBufferLow.addEventListener('updateend', function(){
+                    loadNextSegment();
+                    if(quality){
+                        if(currentRepresentation == 1){
+                            var currentTime = videoElement1.currentTime;
+                            videoElement1.src = URL.createObjectURL(mediaSourceHigh);
+                            videoElement1.currentTime=currentTime;
+                            videoElement1.play();
+                            quality = false;
+                        }
+                    }
+
+                });
+            })
+        }
+        
+        function sourceOpenHigh() {
+            var mediaSourceHigh = this;
+            var sourceBufferHigh = mediaSourceHigh.addSourceBuffer(mimeCodecH);
+
+            fetch(mpdURL1).then(response =>{
+                return response.text()
+            }).then(mpdData =>{
+                // 解析 MPD 文件
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(mpdData, "text/xml");
+                // 获取 SegmentTemplate 的相关信息
+                const timescale = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('timescale'));
+                const segmentDuration = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('duration'));
+                const mediaTemplate = xmlDoc.querySelector('SegmentTemplate').getAttribute('media');
+                const startNumber = parseInt(xmlDoc.querySelector('SegmentTemplate').getAttribute('startNumber'));
+                    // 获取 SegmentTemplate 下的 Initialization 和 Media 模板
+                const initializationTemplate = xmlDoc.querySelector('SegmentTemplate').getAttribute('initialization');
+                let segmentIndex = startNumber;
+
+                var initSegmentURL = baseURL1 + initializationTemplate.replace('$RepresentationID$','1');
+
+                fetch(initSegmentURL).then(response => response.arrayBuffer())
+                .then(initSegmentData=>{
+                    // 加载第一个初始化片段后，开始加载媒体片段
+                    sourceBufferHigh.appendBuffer(initSegmentData);
+                    loadNextSegment();
+                })
+                function loadNextSegment() {
+                    // 构建初始化片段和媒体片段的 URL
+                    const mediaSegmentURL = baseURL1 + mediaTemplate
+                            .replace('$RepresentationID$', '1') // 假定只有一个 Representation
+                            .replace('$Number%05d$', segmentIndex.toString().padStart(5, '0'));
+                    fetch(mediaSegmentURL)
+                    .then(response => {
+                        if(response.ok){
+                            return response.arrayBuffer()
+                        }else{
+                            setTimeout(loadNextSegment, segmentDuration*5/1000);
+                        }
+                    })
+                    .then(mediaSegmentData => {  
+                        sourceBufferHigh.appendBuffer(mediaSegmentData);
+                        segmentIndex++;  
+                        checkBW(mediaSegmentURL) 
+                    })
+                    .catch(error => {
+                        console.log(`waiting next segment:`);
+                    });
+                }
+                sourceBufferHigh.addEventListener('updateend', loadNextSegment);
+            })
+
+        }
+        function checkBW(baseURL) {
+                var startTime = performance.now();
+                baseURL = baseURL.replace(/\/chunk-stream\d+-/, '/chunk-stream0-');
+                console.log('checkBW',baseURL)
+                fetch(baseURL)
+                    .then(response => response.arrayBuffer())
+                    .then(initSegmentData => {
+                        var endTime = performance.now();
+                        var duration = endTime - startTime; // 计算下载持续时间（毫秒）
+                        var fileSize = initSegmentData.byteLength; // 初始化片段文件大小（字节）
+                        var downloadSpeed = (fileSize / duration) * 1000; // 转换为每秒位元組數
+
+                        console.log('下载速度（估算）：' + downloadSpeed.toFixed(2) + ' bytes/秒');
+
+                        if (downloadSpeed < 5000000) { // 将YOUR_THRESHOLD替换为您希望的带宽阈值
+                            console.log('low')
+                            currentRepresentation = 0;
+                        } else {
+                            console.log('high')
+                            currentRepresentation = 1;
+                        }
+                        console.log('currentRepresentation',currentRepresentation)
+                    })
+            }
+    </script>
+</body>
+</html>
